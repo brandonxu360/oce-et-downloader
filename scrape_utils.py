@@ -11,7 +11,7 @@ logger = logging.getLogger('climateengine.http')
 @retry(
     before=before_log(logger, logging.DEBUG),
     after=after_log(logger, logging.DEBUG),
-    stop=stop_after_attempt(3),
+    stop=stop_after_attempt(5),
     wait=wait_exponential(multiplier=1, min=1, max=10),
     retry=retry_if_exception_type((HTTPError, Timeout, ConnectionError)),
     reraise=True
@@ -22,12 +22,6 @@ def synchronous_fetch_with_retry(url: str, **kwargs):
 
     return response.json()
 
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=1, max=10),
-    retry=retry_if_exception_type((ClientResponseError, ClientConnectionError)),
-    reraise=True
-)
 async def asynchronous_fetch_with_retry(session: aiohttp.ClientSession, url: str, semaphore: asyncio.Semaphore, **kwargs):
     """
     Asynchronously fetch data from a URL with automatic retry logic using tenacity and aiohttp. You must 
@@ -40,7 +34,7 @@ async def asynchronous_fetch_with_retry(session: aiohttp.ClientSession, url: str
             after=after_log(logger, logging.DEBUG),
             stop=stop_after_attempt(5),
             wait=wait_exponential(multiplier=1, min=1, max=10),
-            retry=retry_if_exception_type((ClientResponseError, ClientConnectionError)),
+            retry=retry_if_exception_type((ClientResponseError, ClientConnectionError, asyncio.TimeoutError)),
             reraise=True
         )
         async def _fetch():
