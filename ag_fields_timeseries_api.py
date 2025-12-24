@@ -133,6 +133,7 @@ def get_finished_field_ids(individual_dir: Path, dataset: str) -> set[str]:
 
 
 def load_fields_df(ag_fields_url: str, logger: logging.Logger) -> pd.DataFrame:
+    logger.info("Downloading fields GeoJSON: %s", ag_fields_url)
     fields_data = synchronous_fetch_with_retry(ag_fields_url)
     fields: List[Dict[str, Any]] = []
 
@@ -220,21 +221,20 @@ async def fetch_one_field(
     field_id: str,
     coordinates: Any,
 ) -> Tuple[str, Mapping[str, Any]]:
-    async with semaphore:
-        payload = await asynchronous_fetch_with_retry(
-            session=session,
-            url="https://api.climateengine.org/timeseries/native/coordinates",
-            semaphore=semaphore,  # keep for compatibility with your helper
-            headers=headers,
-            params={
-                "dataset": dataset,
-                "variable": ",".join(variables),
-                "start_date": start_date,
-                "end_date": end_date,
-                "area_reducer": "median",
-                "coordinates": json.dumps(coordinates),
-            },
-        )
+    payload = await asynchronous_fetch_with_retry(
+        session=session,
+        url="https://api.climateengine.org/timeseries/native/coordinates",
+        semaphore=semaphore,
+        headers=headers,
+        params={
+            "dataset": dataset,
+            "variable": ",".join(variables),
+            "start_date": start_date,
+            "end_date": end_date,
+            "area_reducer": "median",
+            "coordinates": json.dumps(coordinates),
+        },
+    )
     return field_id, payload
 
 
