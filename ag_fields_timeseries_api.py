@@ -223,21 +223,25 @@ async def fetch_one_field(
     field_id: str,
     coordinates: Any,
 ) -> Tuple[str, Mapping[str, Any]]:
-    payload = await asynchronous_fetch_with_retry(
-        session=session,
-        url="https://api.climateengine.org/timeseries/native/coordinates",
-        semaphore=semaphore,
-        headers=headers,
-        params={
-            "dataset": dataset,
-            "variable": ",".join(variables),
-            "start_date": start_date,
-            "end_date": end_date,
-            "area_reducer": "median",
-            "coordinates": json.dumps(coordinates),
-        },
-    )
-    return field_id, payload
+    try:
+        payload = await asynchronous_fetch_with_retry(
+            session=session,
+            url="https://api.climateengine.org/timeseries/native/coordinates",
+            semaphore=semaphore,
+            headers=headers,
+            params={
+                "dataset": dataset,
+                "variable": ",".join(variables),
+                "start_date": start_date,
+                "end_date": end_date,
+                "area_reducer": "median",
+                "coordinates": json.dumps(coordinates),
+            },
+        )
+        return field_id, payload
+    except Exception as e:
+        # Return error info in the payload so processing can continue
+        return field_id, {"error": True, "error_type": type(e).__name__, "error_message": str(e)}
 
 
 async def fetch_data(
@@ -274,12 +278,27 @@ async def fetch_data(
 
 
 def convert_results_to_pandas(
-    results: Iterable[Tuple[str, Mapping[str, Any]]]
-) -> Dict[str, pd.DataFrame]:
-    """Convert API response payloads into raw per-field dataframes."""
+    results: Iterable[Tuple[str, Mapping[str, Any]]], logger: logging.Logger
+) -> Tuple[Dict[str, pd.DataFrame], List[Tuple[str, str, str]]]:
+    """Convert API response payloads into raw per-field dataframes.
+    
+    Returns:
+        Tuple of (field_dataframes, failed_fields)
+        - field_dataframes: Dict mapping field_id to DataFrame
+        - failed_fields: List of (field_id, error_type, error_message) for fields that failed
+    """
     out: Dict[str, pd.DataFrame] = {}
+    failed: List[Tuple[str, str, str]] = []
 
     for field_id, result in results:
+        # Check if this result represents an error
+        if isinstance(result, dict) and result.get("error"):
+            error_type = result.get("error_type", "Unknown")
+            error_msg = result.get("error_message", "")
+            failed.append((str(field_id), error_type, error_msg))
+            logger.warning("Field %s failed: %s - %s", field_id, error_type, error_msg)
+            continue
+
         rows: List[Dict[str, Any]] = []
 
         data_list = result.get("Data") if isinstance(result, dict) else None
@@ -295,7 +314,7 @@ def convert_results_to_pandas(
 
         out[str(field_id)] = pd.DataFrame(rows)
 
-    return out
+    return out, failed
 
 
 # ----------------------------
@@ -395,6 +414,8 @@ async def main() -> None:
             dataset_out_dir = individual_dir / dataset
             dataset_out_dir.mkdir(parents=True, exist_ok=True)
 
+            dataset_failed_fields: List[Tuple[str, str, str]] = []
+
             for chunk_num in range(chunks):
                 start = chunk_num * args.chunk_size
                 end = min((chunk_num + 1) * args.chunk_size, num_pending)
@@ -410,14 +431,29 @@ async def main() -> None:
                     dataset_index=dataset_index,
                     fields_df=chunk_df,
                 )
-                raw_dfs = convert_results_to_pandas(results)
+                raw_dfs, chunk_failed = convert_results_to_pandas(results, logger)
+                dataset_failed_fields.extend(chunk_failed)
 
                 for field_id, field_df in raw_dfs.items():
                     processed_df = process_df(field_df, dataset_index)
                     output_file = dataset_out_dir / f"{field_id}.parquet"
                     processed_df.to_parquet(output_file, engine="pyarrow", compression="snappy", index=False)
 
-            logger.info("%s: finished", dataset)
+            # Summary of failures for this dataset
+            if dataset_failed_fields:
+                logger.warning(
+                    "%s: finished with %d failures (see log above for details)",
+                    dataset,
+                    len(dataset_failed_fields),
+                )
+                # Group by error type for summary
+                error_counts: Dict[str, int] = {}
+                for _, error_type, _ in dataset_failed_fields:
+                    error_counts[error_type] = error_counts.get(error_type, 0) + 1
+                for error_type, count in sorted(error_counts.items()):
+                    logger.warning("%s: %d fields failed with %s", dataset, count, error_type)
+            else:
+                logger.info("%s: finished successfully", dataset)
 
     # Final merge step
     logger.info("Combine: starting final dataset merge into %s", combined_dir)
