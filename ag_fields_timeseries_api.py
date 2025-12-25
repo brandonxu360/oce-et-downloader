@@ -30,6 +30,7 @@ import logging
 import math
 import os
 from pathlib import Path
+from pyarrow import dataset as pds
 from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 
 import aiohttp
@@ -354,6 +355,7 @@ async def main() -> None:
 
     output_dir = Path(args.output_dir)
     individual_dir = output_dir / "individual"
+    combined_dir = output_dir / "combined"
 
     logger = setup_logging(output_dir=output_dir, log_level=args.log_level, log_to_file=not args.no_log_file)
 
@@ -415,6 +417,19 @@ async def main() -> None:
 
             logger.info("%s: finished", dataset)
 
+    for dataset in DATASETS:
+        data_dir = Path(individual_dir) / dataset
+
+        pyarrow_dataset = pds.dataset(data_dir, format='parquet')
+
+        pds.write_dataset(
+            data=pyarrow_dataset, 
+            base_dir=combined_dir, 
+            basename_template=f'{dataset}-part-{{i}}.parquet',
+            format="parquet",
+            preserve_order=True,
+            existing_data_behavior='overwrite_or_ignore',
+        )
 
 if __name__ == "__main__":
     asyncio.run(main())
