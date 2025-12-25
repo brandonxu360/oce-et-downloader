@@ -28,6 +28,7 @@ import calendar
 import json
 import logging
 import math
+import time
 import os
 from pathlib import Path
 from pyarrow import dataset as pds
@@ -372,6 +373,7 @@ async def main() -> None:
         fields_df = fields_df.head(args.limit_fields)
         logger.warning("Limit enabled: processing only %d fields", len(fields_df))
 
+    # Main fetch and process loop
     semaphore = asyncio.Semaphore(args.concurrency)
 
     timeout = aiohttp.ClientTimeout(total=None)
@@ -417,9 +419,17 @@ async def main() -> None:
 
             logger.info("%s: finished", dataset)
 
+    # Final merge step
+    logger.info("Combine: starting final dataset merge into %s", combined_dir)
+
     for dataset in DATASETS:
+
         data_dir = Path(individual_dir) / dataset
 
+        input_files = list(data_dir.glob("*.parquet"))
+        logger.info("Combine: %s input files: %d", dataset, len(input_files))
+
+        t0 = time.time()
         pyarrow_dataset = pds.dataset(data_dir, format='parquet')
 
         pds.write_dataset(
@@ -430,6 +440,18 @@ async def main() -> None:
             preserve_order=True,
             existing_data_behavior='overwrite_or_ignore',
         )
+
+        out_files = sorted(combined_dir.glob(f"{dataset}-part-*.parquet"))
+        out_bytes = sum(f.stat().st_size for f in out_files)
+        logger.info(
+            "Combine: %s done in %.1fs -> wrote %d parts (%.2f MB)",
+            dataset,
+            time.time() - t0,
+            len(out_files),
+            out_bytes / (1024 * 1024),
+        )
+
+    logger.info("Combine: finished final dataset merge")
 
 if __name__ == "__main__":
     asyncio.run(main())
