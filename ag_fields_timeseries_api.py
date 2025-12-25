@@ -427,7 +427,9 @@ async def main() -> None:
         data_dir = Path(individual_dir) / dataset
 
         input_files = list(data_dir.glob("*.parquet"))
+        total_bytes = sum(f.stat().st_size for f in input_files)
         logger.info("Combine: %s input files: %d", dataset, len(input_files))
+        logger.info("Combine: %s input size: %.2f MB", dataset, total_bytes / (1024 * 1024))
 
         t0 = time.time()
         pyarrow_dataset = pds.dataset(data_dir, format='parquet')
