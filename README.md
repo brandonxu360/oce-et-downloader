@@ -77,7 +77,7 @@ Outputs go under `data/output` by default.
 - Log file:
 	- `data/output/et_timeseries_scraper.log`
 
-## Restart behavior (important)
+## Restart behavior
 
 The script is restart-safe.
 
